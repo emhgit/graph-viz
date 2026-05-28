@@ -1,13 +1,7 @@
 "use client";
 
 /* eslint-disable react/prop-types */
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Panel,
@@ -49,17 +43,10 @@ import {
   splitEdgePatch,
   splitNodePatch,
 } from "./graphStudio/lib/graphPropertyRouting";
+import { cloneJson } from "./graphStudio/lib/undoUtils";
 import { createInitialViewState } from "./graphStudio/lib/viewStateUtils";
+import { useGraphStudioUndo } from "./graphStudio/hooks/useGraphStudioUndo";
 import "./graphStudio/graphStudio.css";
-const HISTORY_LIMIT = 120;
-const cloneJson = (value) => JSON.parse(JSON.stringify(value));
-const snapshotTimelineState = ({ baseGraph, steps, currentFrame }) => ({
-  baseGraph: cloneJson(baseGraph ?? { nodes: [], edges: [] }),
-  steps: cloneJson(steps ?? []),
-  currentFrame: Number.isFinite(Number(currentFrame))
-    ? Number(currentFrame)
-    : 0,
-});
 const GraphStudioVisualizer = ({ snapshot }) => {
   const seedTimeline = useMemo(
     () =>
@@ -114,9 +101,14 @@ const GraphStudioVisualizer = ({ snapshot }) => {
   const dragStateRef = useRef(null);
   const nextNodeIdRef = useRef(0);
   const nextEdgeIdRef = useRef(0);
-  const undoHistoryRef = useRef([]);
-  const historyMetaRef = useRef(null);
-  const applyingUndoRef = useRef(false);
+  const { resetUndoHistory } = useGraphStudioUndo({
+    baseGraph,
+    steps,
+    currentFrame,
+    replaceTimeline,
+    setCurrentFrame,
+    setStatus,
+  });
   const selectedNodeIdSet = useMemo(
     () => new Set(selectedNodeIds.map(String)),
     [selectedNodeIds],
@@ -128,9 +120,7 @@ const GraphStudioVisualizer = ({ snapshot }) => {
     setSelectedObject(null);
     setSelectedNodeIds([]);
     setDrawFrom(null);
-    undoHistoryRef.current = [];
-    historyMetaRef.current = null;
-    applyingUndoRef.current = false;
+    resetUndoHistory();
     nextNodeIdRef.current =
       Math.max(
         -1,
@@ -140,66 +130,7 @@ const GraphStudioVisualizer = ({ snapshot }) => {
       ) + 1;
     nextEdgeIdRef.current = seedTimeline.baseGraph.edges.length;
     setViewResetCounter((c) => c + 1);
-  }, [seedTimeline, replaceTimeline]);
-  useEffect(() => {
-    const currentSnapshot = snapshotTimelineState({
-      baseGraph,
-      steps,
-      currentFrame,
-    });
-    const signature = JSON.stringify(currentSnapshot);
-    const previous = historyMetaRef.current;
-    if (!previous) {
-      historyMetaRef.current = { signature, snapshot: currentSnapshot };
-      return;
-    }
-    if (applyingUndoRef.current) {
-      applyingUndoRef.current = false;
-      historyMetaRef.current = { signature, snapshot: currentSnapshot };
-      return;
-    }
-    if (signature !== previous.signature) {
-      undoHistoryRef.current.push(previous.snapshot);
-      if (undoHistoryRef.current.length > HISTORY_LIMIT)
-        undoHistoryRef.current.shift();
-      historyMetaRef.current = { signature, snapshot: currentSnapshot };
-    }
-  }, [baseGraph, steps, currentFrame]);
-  const undoLastAction = useCallback(() => {
-    const previousSnapshot = undoHistoryRef.current.pop();
-    if (!previousSnapshot) {
-      setStatus("Nothing to undo");
-      return;
-    }
-    applyingUndoRef.current = true;
-    replaceTimeline(previousSnapshot.baseGraph, previousSnapshot.steps);
-    window.setTimeout(() => {
-      setCurrentFrame(previousSnapshot.currentFrame);
-    }, 0);
-    setStatus("Undid last action");
-  }, [replaceTimeline, setCurrentFrame]);
-  useEffect(() => {
-    const onKeyDown = (event) => {
-      const isUndo =
-        (event.metaKey || event.ctrlKey) &&
-        !event.shiftKey &&
-        String(event.key).toLowerCase() === "z";
-      if (!isUndo) return;
-      const target = event.target;
-      const tagName = String(target?.tagName ?? "").toLowerCase();
-      if (
-        tagName === "input" ||
-        tagName === "textarea" ||
-        tagName === "select" ||
-        target?.isContentEditable
-      )
-        return;
-      event.preventDefault();
-      undoLastAction();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [undoLastAction]);
+  }, [seedTimeline, replaceTimeline, resetUndoHistory]);
   useEffect(() => {
     return () => {
       if (timelineRef.current) window.clearTimeout(timelineRef.current);
