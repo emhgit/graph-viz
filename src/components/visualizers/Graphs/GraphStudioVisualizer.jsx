@@ -43,9 +43,9 @@ import {
   splitEdgePatch,
   splitNodePatch,
 } from "./graphStudio/lib/graphPropertyRouting";
-import { cloneJson } from "./graphStudio/lib/undoUtils";
-import { createInitialViewState } from "./graphStudio/lib/viewStateUtils";
 import { useGraphStudioUndo } from "./graphStudio/hooks/useGraphStudioUndo";
+import { useGraphStudioView } from "./graphStudio/hooks/useGraphStudioView";
+import { cloneJson } from "./graphStudio/lib/undoUtils";
 import "./graphStudio/graphStudio.css";
 const GraphStudioVisualizer = ({ snapshot }) => {
   const seedTimeline = useMemo(
@@ -75,7 +75,21 @@ const GraphStudioVisualizer = ({ snapshot }) => {
   const [edgeRouting, setEdgeRouting] = useState(EDGE_ROUTING.straight);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [showGrid, setShowGrid] = useState(false);
-  const [lockCanvas, setLockCanvas] = useState(true);
+  const {
+    viewState,
+    setViewState,
+    viewResetCounter,
+    lockCanvas,
+    setLockCanvas,
+    setViewFromNodes,
+    bumpViewReset,
+    centerViewOnContent,
+    zoomIn,
+    zoomOut,
+    zoomPercent,
+  } = useGraphStudioView({
+    initialNodes: seedTimeline.baseGraph.nodes,
+  });
   const [selectedObject, setSelectedObject] = useState(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState([]);
   const [drawFrom, setDrawFrom] = useState(null);
@@ -87,9 +101,6 @@ const GraphStudioVisualizer = ({ snapshot }) => {
     nodeSize: 22,
     edgeWidth: 2.2,
   });
-  const [viewState, setViewState] = useState(() =>
-    createInitialViewState(seedTimeline.baseGraph.nodes),
-  );
   const [isParserOpen, setIsParserOpen] = useState(false);
   const [parserText, setParserText] = useState("");
   const [isScriptOpen, setIsScriptOpen] = useState(false);
@@ -113,10 +124,9 @@ const GraphStudioVisualizer = ({ snapshot }) => {
     () => new Set(selectedNodeIds.map(String)),
     [selectedNodeIds],
   );
-  const [viewResetCounter, setViewResetCounter] = useState(0);
   useEffect(() => {
     replaceTimeline(seedTimeline.baseGraph, seedTimeline.steps);
-    setViewState(createInitialViewState(seedTimeline.baseGraph.nodes));
+    setViewFromNodes(seedTimeline.baseGraph.nodes);
     setSelectedObject(null);
     setSelectedNodeIds([]);
     setDrawFrom(null);
@@ -129,8 +139,8 @@ const GraphStudioVisualizer = ({ snapshot }) => {
         ),
       ) + 1;
     nextEdgeIdRef.current = seedTimeline.baseGraph.edges.length;
-    setViewResetCounter((c) => c + 1);
-  }, [seedTimeline, replaceTimeline, resetUndoHistory]);
+    bumpViewReset();
+  }, [seedTimeline, replaceTimeline, resetUndoHistory, setViewFromNodes, bumpViewReset]);
   useEffect(() => {
     return () => {
       if (timelineRef.current) window.clearTimeout(timelineRef.current);
@@ -252,29 +262,6 @@ const GraphStudioVisualizer = ({ snapshot }) => {
     };
     tick();
   };
-  const centerViewOnContent = () => {
-    if (lockCanvas) return;
-    setViewResetCounter((c) => c + 1);
-  };
-  const adjustZoom = (direction) => {
-    if (lockCanvas) return;
-    const delta = direction > 0 ? 0.12 : -0.12;
-    const viewportCenterX = 640;
-    const viewportCenterY = 380;
-    setViewState((prev) => {
-      const nextZoom = clamp(prev.zoom + delta, 0.05, 2.6);
-      const worldCenterX = (viewportCenterX - prev.x) / prev.zoom;
-      const worldCenterY = (viewportCenterY - prev.y) / prev.zoom;
-      return {
-        ...prev,
-        zoom: nextZoom,
-        x: viewportCenterX - worldCenterX * nextZoom,
-        y: viewportCenterY - worldCenterY * nextZoom,
-      };
-    });
-  };
-  const zoomIn = () => adjustZoom(1);
-  const zoomOut = () => adjustZoom(-1);
   const addNodeAt = (point) => {
     const id = nextNodeIdRef.current;
     nextNodeIdRef.current += 1;
@@ -542,7 +529,7 @@ const GraphStudioVisualizer = ({ snapshot }) => {
     const nextGraph = cloneJson(preset.graph);
     const nextSteps = cloneJson(preset.steps);
     replaceTimeline(nextGraph, nextSteps);
-    setViewState(createInitialViewState(nextGraph.nodes));
+    setViewFromNodes(nextGraph.nodes);
     setStatus(`Applied ${presetName.toUpperCase()} preset`);
   };
   return (
@@ -580,7 +567,7 @@ const GraphStudioVisualizer = ({ snapshot }) => {
                 onPlay={isPlaying ? stopTimeline : playTimeline}
                 isPlaying={isPlaying}
                 onCenterView={centerViewOnContent}
-                zoomPercent={Math.round(viewState.zoom * 100)}
+                zoomPercent={zoomPercent}
                 onZoomIn={zoomIn}
                 onZoomOut={zoomOut}
               />{" "}
