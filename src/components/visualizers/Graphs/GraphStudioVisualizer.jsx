@@ -15,21 +15,15 @@ import TimelinePanel from "./graphStudio/TimelinePanel";
 import PropertyPanel from "./graphStudio/PropertyPanel";
 // HUDPalette moved into the left Tools sidebar (controls relocated)
 // import HUDPalette from './graphStudio/HUDPalette';
-import {
-  computeStepDiff,
-  exportEdgeListText,
-  normalizeTimelinePayload,
-  parseEdgeListText,
-  runScriptTrace,
-} from "./graphStudio/graphStudioUtils";
+import { computeStepDiff, normalizeTimelinePayload } from "./graphStudio/graphStudioUtils";
 import { EDGE_ROUTING } from "./graphStudio/constants";
 import { DEFAULT_SCRIPT } from "./graphStudio/data/defaultScript";
 import { GRAPH_PRESETS } from "./graphStudio/data/graphPresets";
-import { exportTimelineVideo } from "./graphStudio/lib/exportTimelineVideo";
 import ExportVideoModal from "./graphStudio/modals/ExportVideoModal";
 import ParserModal from "./graphStudio/modals/ParserModal";
 import ScriptModal from "./graphStudio/modals/ScriptModal";
 import { useGraphStudioCanvasHandlers } from "./graphStudio/hooks/useGraphStudioCanvasHandlers";
+import { useGraphStudioImportExport } from "./graphStudio/hooks/useGraphStudioImportExport";
 import { useGraphStudioGraphModel } from "./graphStudio/hooks/useGraphStudioGraphModel";
 import { useGraphStudioPlayback } from "./graphStudio/hooks/useGraphStudioPlayback";
 import {
@@ -90,13 +84,6 @@ const GraphStudioVisualizer = ({ snapshot }) => {
     nodeSize: 22,
     edgeWidth: 2.2,
   });
-  const [isParserOpen, setIsParserOpen] = useState(false);
-  const [parserText, setParserText] = useState("");
-  const [isScriptOpen, setIsScriptOpen] = useState(false);
-  const [scriptText, setScriptText] = useState(DEFAULT_SCRIPT);
-  const [isExportVideoOpen, setIsExportVideoOpen] = useState(false);
-  const [exportVideoLabelPos, setExportVideoLabelPos] =
-    useState("bottom-center");
   const { resetUndoHistory } = useGraphStudioUndo({
     baseGraph,
     steps,
@@ -187,6 +174,31 @@ const GraphStudioVisualizer = ({ snapshot }) => {
     setSelectedNodeIds,
     clearSelection,
   });
+  const {
+    isParserOpen,
+    setIsParserOpen,
+    parserText,
+    setParserText,
+    applyParserText,
+    isScriptOpen,
+    setIsScriptOpen,
+    scriptText,
+    setScriptText,
+    runScript,
+    isExportVideoOpen,
+    exportVideoLabelPos,
+    setExportVideoLabelPos,
+    exportText,
+    openExportVideoModal,
+    closeExportVideoModal,
+    confirmExportVideo,
+  } = useGraphStudioImportExport({
+    baseGraph,
+    steps,
+    setCurrentFrame,
+    replaceTimeline,
+    setStatus,
+  });
   useEffect(() => {
     replaceTimeline(seedTimeline.baseGraph, seedTimeline.steps);
     setViewFromNodes(seedTimeline.baseGraph.nodes);
@@ -211,55 +223,6 @@ const GraphStudioVisualizer = ({ snapshot }) => {
     () => computeStepDiff(previousGraph, computedGraph),
     [previousGraph, computedGraph],
   );
-  const applyParserText = () => {
-    try {
-      const { graph, meta } = parseEdgeListText(parserText);
-      replaceTimeline(graph, [
-        {
-          id: "step-0",
-          description: "Parsed input",
-          durationMs: 600,
-          nodeOverrides: {},
-          edgeOverrides: {},
-        },
-      ]);
-      setIsParserOpen(false);
-      setStatus(`Graph parsed: ${meta}`);
-    } catch (error) {
-      setStatus(`Parse failed: ${error.message}`);
-    }
-  };
-  const exportText = async () => {
-    const output = exportEdgeListText(baseGraph);
-    try {
-      await navigator.clipboard.writeText(output);
-      setStatus("Edge list copied to clipboard");
-    } catch {
-      setStatus("Clipboard unavailable; open parser and paste manually");
-      setIsParserOpen(true);
-      setParserText(output);
-    }
-  };
-  const exportVideo = async (labelPos) => {
-    setStatus("Exporting video...");
-    try {
-      await exportTimelineVideo({ steps, setCurrentFrame, labelPos });
-      setStatus("Video exported successfully");
-    } catch (error) {
-      console.error(error);
-      setStatus(`Export failed: ${error.message}`);
-    }
-  };
-  const runScript = () => {
-    try {
-      const traceSteps = runScriptTrace({ code: scriptText, graph: baseGraph });
-      replaceTimeline(baseGraph, traceSteps);
-      setIsScriptOpen(false);
-      setStatus(`Script generated ${traceSteps.length} frames`);
-    } catch (error) {
-      setStatus(`Script error: ${error.message}`);
-    }
-  };
   const applyPreset = (presetName) => {
     const preset = GRAPH_PRESETS[presetName];
     if (!preset) return;
@@ -297,7 +260,7 @@ const GraphStudioVisualizer = ({ snapshot }) => {
                 onAutoLayout={applyLayout}
                 onOpenParser={() => setIsParserOpen(true)}
                 onExportText={exportText}
-                onExportVideo={() => setIsExportVideoOpen(true)}
+                onExportVideo={openExportVideoModal}
                 onOpenScript={() => setIsScriptOpen(true)}
                 selectedCount={selectedNodeIds.length}
                 onApplyPreset={applyPreset}
@@ -427,11 +390,8 @@ const GraphStudioVisualizer = ({ snapshot }) => {
         open={isExportVideoOpen}
         labelPos={exportVideoLabelPos}
         onLabelPosChange={setExportVideoLabelPos}
-        onClose={() => setIsExportVideoOpen(false)}
-        onExport={() => {
-          setIsExportVideoOpen(false);
-          exportVideo(exportVideoLabelPos);
-        }}
+        onClose={closeExportVideoModal}
+        onExport={confirmExportVideo}
       />
     </div>
   );
