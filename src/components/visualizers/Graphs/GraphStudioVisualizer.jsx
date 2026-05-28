@@ -1,7 +1,7 @@
 "use client";
 
 /* eslint-disable react/prop-types */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Panel,
@@ -16,14 +16,11 @@ import PropertyPanel from "./graphStudio/PropertyPanel";
 // HUDPalette moved into the left Tools sidebar (controls relocated)
 // import HUDPalette from './graphStudio/HUDPalette';
 import {
-  clamp,
-  clampNodePosition,
   computeStepDiff,
   exportEdgeListText,
   normalizeTimelinePayload,
   parseEdgeListText,
   runScriptTrace,
-  snapToGrid,
 } from "./graphStudio/graphStudioUtils";
 import { EDGE_ROUTING } from "./graphStudio/constants";
 import { DEFAULT_SCRIPT } from "./graphStudio/data/defaultScript";
@@ -32,6 +29,7 @@ import { exportTimelineVideo } from "./graphStudio/lib/exportTimelineVideo";
 import ExportVideoModal from "./graphStudio/modals/ExportVideoModal";
 import ParserModal from "./graphStudio/modals/ParserModal";
 import ScriptModal from "./graphStudio/modals/ScriptModal";
+import { useGraphStudioCanvasHandlers } from "./graphStudio/hooks/useGraphStudioCanvasHandlers";
 import { useGraphStudioGraphModel } from "./graphStudio/hooks/useGraphStudioGraphModel";
 import { useGraphStudioPlayback } from "./graphStudio/hooks/useGraphStudioPlayback";
 import {
@@ -85,7 +83,6 @@ const GraphStudioVisualizer = ({ snapshot }) => {
   } = useGraphStudioView({
     initialNodes: seedTimeline.baseGraph.nodes,
   });
-  const [drawFrom, setDrawFrom] = useState(null);
   const [status, setStatus] = useState("Ready");
   const [globalSettings, setGlobalSettings] = useState({
     forceStrength: 1,
@@ -100,7 +97,6 @@ const GraphStudioVisualizer = ({ snapshot }) => {
   const [isExportVideoOpen, setIsExportVideoOpen] = useState(false);
   const [exportVideoLabelPos, setExportVideoLabelPos] =
     useState("bottom-center");
-  const dragStateRef = useRef(null);
   const { resetUndoHistory } = useGraphStudioUndo({
     baseGraph,
     steps,
@@ -166,11 +162,36 @@ const GraphStudioVisualizer = ({ snapshot }) => {
     updateBaseEdge,
     setStepProperty,
   });
+  const {
+    drawFrom,
+    clearDrawState,
+    handleSetMode,
+    startDrawEdge,
+    onSelectNode,
+    onSelectEdge,
+    onSelectNodes,
+    onBackgroundClear,
+    onNodeClickForDraw,
+    onNodePointerDown,
+    onNodeMove,
+    onNodePointerUp,
+  } = useGraphStudioCanvasHandlers({
+    setMode,
+    setStatus,
+    baseGraph,
+    addEdge,
+    updateBaseNodesBulk,
+    selectedNodeIds,
+    selectedNodeIdSet,
+    setSelectedObject,
+    setSelectedNodeIds,
+    clearSelection,
+  });
   useEffect(() => {
     replaceTimeline(seedTimeline.baseGraph, seedTimeline.steps);
     setViewFromNodes(seedTimeline.baseGraph.nodes);
     clearSelection();
-    setDrawFrom(null);
+    clearDrawState();
     resetUndoHistory();
     bumpViewReset();
   }, [
@@ -180,6 +201,7 @@ const GraphStudioVisualizer = ({ snapshot }) => {
     setViewFromNodes,
     bumpViewReset,
     clearSelection,
+    clearDrawState,
   ]);
   const previousGraph = useMemo(() => {
     if (currentFrame <= 0) return computedGraph;
@@ -189,115 +211,6 @@ const GraphStudioVisualizer = ({ snapshot }) => {
     () => computeStepDiff(previousGraph, computedGraph),
     [previousGraph, computedGraph],
   );
-  const onNodeClickForDraw = (nodeId) => {
-    if (drawFrom === null || drawFrom === undefined) {
-      setDrawFrom(nodeId);
-      setStatus(`Draw mode: click target node (source is ${nodeId})`);
-      return;
-    }
-    if (String(drawFrom) === String(nodeId)) {
-      setStatus("Pick a different target node");
-      return;
-    }
-    addEdge(drawFrom, nodeId);
-    setDrawFrom(null);
-    setMode("select");
-  };
-  const handleSetMode = (nextMode) => {
-    if (nextMode !== "draw") setDrawFrom(null);
-    else if (drawFrom === null || drawFrom === undefined) {
-      setStatus("Draw mode: click source node, then target node");
-    }
-    setMode(nextMode);
-  };
-  const startDrawEdge = () => {
-    if (selectedNodeIds.length === 2) {
-      const [from, to] = selectedNodeIds;
-      addEdge(from, to);
-      handleSetMode("select");
-      return;
-    }
-    if (selectedNodeIds.length === 1) {
-      const sourceId = selectedNodeIds[0];
-      setDrawFrom(sourceId);
-      setMode("draw");
-      setStatus(`Draw mode: click target node (source is ${sourceId})`);
-      return;
-    }
-    setDrawFrom(null);
-    handleSetMode("draw");
-  };
-  const onSelectNode = (nodeId, additive = false) => {
-    const idText = String(nodeId);
-    setSelectedObject({ type: "node", id: nodeId });
-    if (additive) {
-      setSelectedNodeIds((prev) => {
-        const set = new Set(prev.map(String));
-        if (set.has(idText)) set.delete(idText);
-        else set.add(idText);
-        return Array.from(set);
-      });
-      return;
-    }
-    setSelectedNodeIds([idText]);
-  };
-  const onSelectEdge = (edgeId) => {
-    setSelectedObject({ type: "edge", id: edgeId });
-    setSelectedNodeIds([]);
-  };
-  const onSelectNodes = (nodeIds) => {
-    setSelectedNodeIds(nodeIds);
-    if (nodeIds.length === 1) {
-      setSelectedObject({ type: "node", id: nodeIds[0] });
-    } else {
-      setSelectedObject(null);
-    }
-  };
-  const onBackgroundClear = () => {
-    clearSelection();
-    setDrawFrom(null);
-  };
-  const onNodePointerDown = ({ nodeId, worldX, worldY }) => {
-    const shouldDragGroup =
-      selectedNodeIdSet.has(String(nodeId)) && selectedNodeIdSet.size > 1;
-    const dragNodeIds = shouldDragGroup
-      ? Array.from(selectedNodeIdSet)
-      : [String(nodeId)];
-    const nodeMap = new Map(
-      baseGraph.nodes.map((node) => [String(node.id), node]),
-    );
-    const anchor = nodeMap.get(String(nodeId));
-    if (!anchor) return;
-    const offsets = {};
-    dragNodeIds.forEach((id) => {
-      const node = nodeMap.get(String(id));
-      if (!node) return;
-      offsets[id] = { dx: worldX - node.x, dy: worldY - node.y };
-    });
-    dragStateRef.current = {
-      anchorId: String(nodeId),
-      nodeIds: dragNodeIds,
-      offsets,
-    };
-  };
-  const onNodeMove = ({ worldX, worldY, snapEnabled: snap }) => {
-    const drag = dragStateRef.current;
-    if (!drag) return;
-    const patchById = {};
-    drag.nodeIds.forEach((id) => {
-      const offset = drag.offsets[id];
-      if (!offset) return;
-      const rawX = worldX - offset.dx;
-      const rawY = worldY - offset.dy;
-      const snappedX = snap ? snapToGrid(rawX) : rawX;
-      const snappedY = snap ? snapToGrid(rawY) : rawY;
-      patchById[id] = clampNodePosition({ x: snappedX, y: snappedY });
-    });
-    updateBaseNodesBulk(patchById);
-  };
-  const onNodePointerUp = () => {
-    dragStateRef.current = null;
-  };
   const applyParserText = () => {
     try {
       const { graph, meta } = parseEdgeListText(parserText);
